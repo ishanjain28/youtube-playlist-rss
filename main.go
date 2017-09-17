@@ -195,15 +195,16 @@ func servePodcast(w http.ResponseWriter, r *http.Request) {
 			}
 			defer nf.Close()
 
-			nCopied, err := io.Copy(nf, resp.Body)
+			writers := io.MultiWriter(nf, w)
+
+			w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+
+			_, err = io.Copy(writers, resp.Body)
 			if err != nil {
 				log.Printf("error in copying bytes: %v", err)
 			}
 
-			w.Header().Set("Content-Length", strconv.FormatInt(nCopied, 0))
-
 			activeDownloads = delete(activeDownloads, id)
-			io.Copy(w, nf)
 
 			return
 		}
@@ -217,7 +218,7 @@ func servePodcast(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("error in fetching size of %s: %v", id, err)
 	} else {
-		w.Header().Set("Content-Length", strconv.FormatInt(stats.Size(), 0))
+		w.Header().Set("Content-Length", strconv.FormatInt(stats.Size(), 10))
 	}
 
 	io.Copy(w, f)
