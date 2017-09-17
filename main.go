@@ -150,8 +150,8 @@ func seedPodcasts() {
 		item := &feeds.Item{
 			Title:       v.Snippet.Title,
 			Id:          v.ContentDetails.VideoId,
-			Source:      &feeds.Link{Href: fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s", v.ContentDetails.VideoId)},
-			Link:        &feeds.Link{Href: fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s.mp3", v.ContentDetails.VideoId), Type: "audio/mp3", Length: v.ContentDetails.EndAt},
+			Source:      &feeds.Link{Href: fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s", v.ContentDetails.VideoId), Rel: "self", Type: "audio/mp3"},
+			Link:        &feeds.Link{Href: fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s.mp3", v.ContentDetails.VideoId), Type: "audio/mp3", Length: v.ContentDetails.EndAt, Rel: "self"},
 			Description: v.Snippet.Description,
 		}
 		yt.feed.Add(item)
