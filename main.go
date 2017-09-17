@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/eduncan911/podcast"
 	"github.com/go-redis/redis"
 
-	"github.com/gorilla/feeds"
 	"github.com/gorilla/mux"
 	"google.golang.org/api/googleapi/transport"
 	youtube "google.golang.org/api/youtube/v3"
@@ -49,7 +49,7 @@ type YT1SResponse struct {
 
 type ytAPI struct {
 	service    *youtube.Service
-	feed       *feeds.Feed
+	feed       podcast.Podcast
 	channelID  string
 	playlistID string
 }
@@ -90,11 +90,13 @@ func main() {
 	go func() {
 		for {
 			seedPodcasts()
-			time.Sleep(30 * time.Minute)
+			time.Sleep(28 * time.Minute)
 		}
 	}()
 
 	router := mux.NewRouter()
+
+	router.Handle("/", http.RedirectHandler("/feed", http.StatusTemporaryRedirect))
 
 	router.HandleFunc("/feed", serveFeed)
 
@@ -126,7 +128,7 @@ func main() {
 func seedPodcasts() {
 
 	var err error
-	yt := &ytAPI{feed: &feeds.Feed{}}
+	yt := &ytAPI{}
 	yt.service, err = youtube.New(&http.Client{
 		Transport: &transport.APIKey{Key: API_KEY},
 	})
@@ -136,10 +138,22 @@ func seedPodcasts() {
 
 	yt.channelID = "UC_BzFbxG2za3bp5NRRRXJSw"
 	yt.playlistID = "PL64wiCrrxh4Jisi7OcCJIUpguV_f5jGnZ"
-	err = yt.fetchChannelDetails()
+	channel, err := yt.fetchChannelDetails()
 	if err != nil {
 		log.Println(err)
 	}
+
+	title := channel.Items[0].Snippet.Title
+	desc := channel.Items[0].Snippet.Description
+	u := fmt.Sprintf("https://youtube.com/playlist?list=%s", yt.playlistID)
+	pubAt, err := time.Parse(time.RFC3339, channel.Items[0].Snippet.PublishedAt)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	currTime := time.Now()
+	podcastRSS := podcast.New(title, u, desc, &pubAt, &currTime)
+
+	yt.feed = podcastRSS
 
 	playlistItems, err := yt.fetchPlaylistDetails()
 	if err != nil {
@@ -147,16 +161,21 @@ func seedPodcasts() {
 	}
 
 	for _, v := range playlistItems {
-		item := &feeds.Item{
-			Title:       v.Snippet.Title,
-			Id:          v.ContentDetails.VideoId,
-			Source:      &feeds.Link{Href: fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s", v.ContentDetails.VideoId), Rel: "self", Type: "audio/mp3"},
-			Link:        &feeds.Link{Href: fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s.mp3", v.ContentDetails.VideoId), Type: "audio/mp3", Length: v.ContentDetails.EndAt, Rel: "self"},
-			Description: v.Snippet.Description,
+		t, err := time.Parse(time.RFC3339, v.Snippet.PublishedAt)
+		if err != nil {
+			log.Println(err)
 		}
-		yt.feed.Add(item)
+		item := podcast.Item{
+			Title:       v.Snippet.Title,
+			GUID:        v.ContentDetails.VideoId,
+			Source:      fmt.Sprintf("https://youtube.com/watch?v=%s", v.ContentDetails.VideoId),
+			Link:        fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s.mp3", v.ContentDetails.VideoId),
+			Description: v.Snippet.Description,
+			PubDate:     &t,
+		}
+		yt.feed.AddItem(item)
 	}
-	a, _ := yt.feed.ToRss()
+	a := yt.feed.String()
 	err = client.Set("rss_feed", a, time.Duration(0)).Err()
 	if err != nil {
 		log.Printf("error in saving rss feed: %v", err)
@@ -218,39 +237,18 @@ func (yt *ytAPI) fetchPlaylistDetails() ([]*youtube.PlaylistItem, error) {
 
 func fetchPlaylistItems(yt *ytAPI, nextPageToken string) (*youtube.PlaylistItemListResponse, error) {
 
-	var playlistresp *youtube.PlaylistItemListResponse
-	var err error
-
 	if nextPageToken != "" {
 		call := yt.service.PlaylistItems.List("contentDetails,snippet").PlaylistId(yt.playlistID).MaxResults(50).PageToken(nextPageToken)
-		playlistresp, err = call.Do()
-		if err != nil {
-			return nil, err
-		}
-		return playlistresp, nil
+		return call.Do()
 	}
 	call := yt.service.PlaylistItems.List("contentDetails,snippet").PlaylistId(yt.playlistID).MaxResults(50)
-	playlistresp, err = call.Do()
-	if err != nil {
-		return nil, err
-	}
-
-	return playlistresp, nil
+	return call.Do()
 }
 
-func (yt *ytAPI) fetchChannelDetails() error {
+func (yt *ytAPI) fetchChannelDetails() (*youtube.ChannelListResponse, error) {
 	call := yt.service.Channels.List("snippet").Id(yt.channelID)
-	resp, err := call.Do()
-	if err != nil {
-		return err
-	}
 
-	yt.feed.Title = resp.Items[0].Snippet.Title
-	yt.feed.Link = &feeds.Link{Href: fmt.Sprintf("https://youtube.com/playlist?list=%s", yt.playlistID), Rel: "self", Type: "application/rss+xml"}
-	yt.feed.Description = resp.Items[0].Snippet.Description
-	yt.feed.Id = yt.playlistID
-	yt.feed.Copyright = resp.Items[0].Snippet.CustomUrl
-	return nil
+	return call.Do()
 }
 
 func fetchMP3File(id string) (string, error) {
