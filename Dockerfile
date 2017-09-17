@@ -1,7 +1,7 @@
-FROM ubuntu
+FROM alpine
 
-RUN apt-get update
-RUN apt-get install -y ffmpeg 
+RUN apk update
+RUN apk add ffmpeg ca-certificates
 
 COPY youtube-playlist-rss /usr/bin
 
