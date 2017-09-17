@@ -100,7 +100,7 @@ func main() {
 
 	router.HandleFunc("/dl/{videoid}.mp3", servePodcast)
 
-	http.ListenAndServe(":5000", router)
+	http.ListenAndServe(fmt.Sprintf(":%s", PORT), router)
 	// 	fmt.Println(v)
 	// 	u, _ := fetchMP3File(v)
 
