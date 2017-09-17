@@ -20,8 +20,12 @@ import (
 
 type YtInMp3Response struct {
 	Title  string `json:"title"`
-	Length string `json:"length"`
-	Link   string `json:"link"`
+	Result struct {
+		Num140 string `json:"140"`
+	} `json:"result"`
+	Subtitle struct {
+	} `json:"subtitle"`
+	Status bool `json:"status"`
 }
 
 type ytAPI struct {
@@ -32,8 +36,8 @@ type ytAPI struct {
 }
 
 var client *redis.Client
-var PORT = os.Getenv("PORT")
-var API_KEY = os.Getenv("API_KEY")
+var port = os.Getenv("PORT")
+var api_key = os.Getenv("API_KEY")
 
 func init() {
 
@@ -42,11 +46,11 @@ func init() {
 		log.Fatalln("$REDISTOGO_URL not set")
 	}
 
-	if PORT == "" {
+	if port == "" {
 		log.Fatalln("$PORT not set")
 	}
 
-	if API_KEY == "" {
+	if api_key == "" {
 		log.Fatalln("$API_KEY not set")
 	}
 
@@ -79,7 +83,7 @@ func main() {
 
 	router.HandleFunc("/dl/{videoid}.mp3", servePodcast)
 
-	http.ListenAndServe(fmt.Sprintf(":%s", PORT), router)
+	http.ListenAndServe(fmt.Sprintf(":%s", port), router)
 }
 
 func seedPodcasts() {
@@ -87,7 +91,7 @@ func seedPodcasts() {
 	var err error
 	yt := &ytAPI{}
 	yt.service, err = youtube.New(&http.Client{
-		Transport: &transport.APIKey{Key: API_KEY},
+		Transport: &transport.APIKey{Key: api_key},
 	})
 	if err != nil {
 		log.Fatalf("error in creating service: %v", err)
@@ -166,6 +170,8 @@ func servePodcast(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if os.IsNotExist(err) {
 
+			// Bug: When more than one requests come asking for the same podcast, It'll redownload them
+			// TODO: Fix it..
 			resp, err := fetchMP3File(id)
 			if err != nil {
 				log.Printf("error in downloading %s: %v", id, err)
@@ -242,7 +248,7 @@ func (yt *ytAPI) fetchChannelDetails() (*youtube.ChannelListResponse, error) {
 }
 
 func fetchMP3File(id string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("http://www.youtubeinmp3.com/fetch/?format=JSON&video=https://www.youtube.com/watch?v=%s", id), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf("http://api.youtubemultidownloader.com/video?id=%s", id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +268,7 @@ func fetchMP3File(id string) (*http.Response, error) {
 		return nil, err
 	}
 
-	dlResp, err := http.Get(ytdlResp.Link)
+	dlResp, err := http.Get(ytdlResp.Result.Num140)
 	if err != nil {
 		return nil, err
 	}
