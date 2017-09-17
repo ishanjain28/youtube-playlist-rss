@@ -16,8 +16,6 @@ import (
 	youtube "google.golang.org/api/youtube/v3"
 )
 
-const API_KEY = ""
-
 type YT1SResponse struct {
 	Title  string `json:"title"`
 	Result struct {
@@ -58,6 +56,7 @@ type ytAPI struct {
 
 var client *redis.Client
 var PORT = os.Getenv("PORT")
+var API_KEY = os.Getenv("API_KEY")
 
 func init() {
 
@@ -68,6 +67,10 @@ func init() {
 
 	if PORT == "" {
 		log.Fatalln("$PORT not set")
+	}
+
+	if API_KEY == "" {
+		log.Fatalln("$API_KEY not set")
 	}
 
 	opt, err := redis.ParseURL(redisURL)
@@ -83,7 +86,14 @@ func init() {
 }
 
 func main() {
-	seedPodcasts()
+
+	go func() {
+		for {
+			seedPodcasts()
+			time.Sleep(30 * time.Minute)
+		}
+	}()
+
 	router := mux.NewRouter()
 
 	router.HandleFunc("/feed", serveFeed)
@@ -164,6 +174,13 @@ func serveFeed(w http.ResponseWriter, r *http.Request) {
 }
 
 func servePodcast(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["videoid"]
+
+	if id == "" {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
 
 }
 
