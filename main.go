@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/eduncan911/podcast"
@@ -38,6 +39,7 @@ type ytAPI struct {
 var client *redis.Client
 var port = os.Getenv("PORT")
 var api_key = os.Getenv("API_KEY")
+var activeDownloads []string
 
 func init() {
 
@@ -165,13 +167,20 @@ func servePodcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for {
+		found := findInSlice(activeDownloads, id)
+		if !found {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+
 	absFilePath := filepath.Join(os.TempDir(), fmt.Sprintf("%s.mp3", id))
 	f, err := os.OpenFile(absFilePath, os.O_RDONLY, 0x666)
 	if err != nil {
 		if os.IsNotExist(err) {
 
-			// Bug: When more than one requests come asking for the same podcast, It'll redownload them
-			// TODO: Fix it..
+			activeDownloads = append(activeDownloads, id)
 			resp, err := fetchMP3File(id)
 			if err != nil {
 				log.Printf("error in downloading %s: %v", id, err)
@@ -186,9 +195,15 @@ func servePodcast(w http.ResponseWriter, r *http.Request) {
 			}
 			defer nf.Close()
 
-			writers := io.MultiWriter(w, nf)
+			nCopied, err := io.Copy(nf, resp.Body)
+			if err != nil {
+				log.Printf("error in copying bytes: %v", err)
+			}
 
-			io.Copy(writers, resp.Body)
+			w.Header().Set("Content-Length", strconv.FormatInt(nCopied, 0))
+
+			activeDownloads = delete(activeDownloads, id)
+			io.Copy(w, nf)
 
 			return
 		}
@@ -197,6 +212,13 @@ func servePodcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+
+	stats, err := f.Stat()
+	if err != nil {
+		log.Printf("error in fetching size of %s: %v", id, err)
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(stats.Size(), 0))
+	}
 
 	io.Copy(w, f)
 }
@@ -274,4 +296,25 @@ func fetchMP3File(id string) (*http.Response, error) {
 	}
 
 	return dlResp, nil
+}
+
+func findInSlice(slice []string, key string) bool {
+	for i := range slice {
+		if slice[i] == key {
+			return true
+		}
+	}
+	return false
+}
+
+func delete(s []string, key string) []string {
+	index := 0
+	for i := range s {
+		if s[i] == key {
+			index = i
+		}
+	}
+
+	s[len(s)-1], s[index] = s[index], s[len(s)-1]
+	return s[:len(s)-1]
 }
