@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/eduncan911/podcast"
@@ -16,35 +18,10 @@ import (
 	youtube "google.golang.org/api/youtube/v3"
 )
 
-type YT1SResponse struct {
+type YtInMp3Response struct {
 	Title  string `json:"title"`
-	Result struct {
-		Num17  string `json:"17"`
-		Num18  string `json:"18"`
-		Num22  string `json:"22"`
-		Num36  string `json:"36"`
-		Num43  string `json:"43"`
-		Num133 string `json:"133"`
-		Num134 string `json:"134"`
-		Num135 string `json:"135"`
-		Num136 string `json:"136"`
-		Num137 string `json:"137"`
-		Num140 string `json:"140"`
-		Num160 string `json:"160"`
-		Num171 string `json:"171"`
-		Num242 string `json:"242"`
-		Num243 string `json:"243"`
-		Num244 string `json:"244"`
-		Num247 string `json:"247"`
-		Num248 string `json:"248"`
-		Num249 string `json:"249"`
-		Num250 string `json:"250"`
-		Num251 string `json:"251"`
-		Num278 string `json:"278"`
-	} `json:"result"`
-	Subtitle struct {
-	} `json:"subtitle"`
-	Status bool `json:"status"`
+	Length string `json:"length"`
+	Link   string `json:"link"`
 }
 
 type ytAPI struct {
@@ -90,7 +67,7 @@ func main() {
 	go func() {
 		for {
 			seedPodcasts()
-			time.Sleep(28 * time.Minute)
+			time.Sleep(1 * time.Minute)
 		}
 	}()
 
@@ -103,26 +80,6 @@ func main() {
 	router.HandleFunc("/dl/{videoid}.mp3", servePodcast)
 
 	http.ListenAndServe(fmt.Sprintf(":%s", PORT), router)
-	// 	fmt.Println(v)
-	// 	u, _ := fetchMP3File(v)
-
-	// 	ur, _ := url.Parse(fmt.Sprintf("https://api.youtubemultidownloader.com%s", u))
-
-	// 	meta, err := pluto.FetchMeta(ur)
-	// 	if err != nil {
-	// 		log.Fatalln(err)
-	// 	}
-	// 	f, _ := os.Create(meta.Name)
-
-	// 	err = pluto.Download(&pluto.Config{
-	// 		Meta:   meta,
-	// 		Parts:  50,
-	// 		Writer: f,
-	// 	})
-	// 	if err != nil {
-	// 		log.Fatalln(err)
-	// 	}
-	// }
 }
 
 func seedPodcasts() {
@@ -141,6 +98,7 @@ func seedPodcasts() {
 	channel, err := yt.fetchChannelDetails()
 	if err != nil {
 		log.Println(err)
+		return
 	}
 
 	title := channel.Items[0].Snippet.Title
@@ -149,11 +107,13 @@ func seedPodcasts() {
 	pubAt, err := time.Parse(time.RFC3339, channel.Items[0].Snippet.PublishedAt)
 	if err != nil {
 		log.Println(err.Error())
+		return
 	}
+	cover := channel.Items[0].Snippet.Thumbnails.High.Url
 	currTime := time.Now()
-	podcastRSS := podcast.New(title, u, desc, &pubAt, &currTime)
 
-	yt.feed = podcastRSS
+	yt.feed = podcast.New(title, u, desc, &pubAt, &currTime)
+	yt.feed.AddImage(cover)
 
 	playlistItems, err := yt.fetchPlaylistDetails()
 	if err != nil {
@@ -169,7 +129,7 @@ func seedPodcasts() {
 			Title:       v.Snippet.Title,
 			GUID:        v.ContentDetails.VideoId,
 			Source:      fmt.Sprintf("https://youtube.com/watch?v=%s", v.ContentDetails.VideoId),
-			Link:        fmt.Sprintf("https://afternoon-brook-65479.herokuapp.com/dl/%s.mp3", v.ContentDetails.VideoId),
+			Link:        fmt.Sprintf("https://justforfunc.herokuapp.com/dl/%s.mp3", v.ContentDetails.VideoId),
 			Description: v.Snippet.Description,
 			PubDate:     &t,
 		}
@@ -201,6 +161,38 @@ func servePodcast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	absFilePath := filepath.Join(os.TempDir(), fmt.Sprintf("%s.mp3", id))
+	f, err := os.OpenFile(absFilePath, os.O_RDONLY, 0x666)
+	if err != nil {
+		if os.IsNotExist(err) {
+
+			resp, err := fetchMP3File(id)
+			if err != nil {
+				log.Printf("error in downloading %s: %v", id, err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
+			defer resp.Body.Close()
+
+			nf, err := os.Create(absFilePath)
+			if err != nil {
+				log.Printf("error in creating new file: %v", err)
+			}
+			defer nf.Close()
+
+			writers := io.MultiWriter(w, nf)
+
+			io.Copy(writers, resp.Body)
+
+			return
+		}
+		log.Printf("error in fetching %s: %v", id, err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	io.Copy(w, f)
 }
 
 func (yt *ytAPI) fetchPlaylistDetails() ([]*youtube.PlaylistItem, error) {
@@ -214,19 +206,17 @@ func (yt *ytAPI) fetchPlaylistDetails() ([]*youtube.PlaylistItem, error) {
 
 	for _, v := range playlistResp.Items {
 
+		// Buggy code, It has to be fixed if you want to make a podcast of a playlist with 50+ items
 		// for {
 		// 	if playlistResp.NextPageToken == "" {
 		// 		break
 		// 	}
-
 		// 	playlistResp, err := fetchPlaylistItems(yt, playlistResp.NextPageToken)
 		// 	if err != nil {
 		// 		return nil, err
 		// 	}
-
-		// 	fmt.Println("fetching more videos")
 		// 	for _, v2 := range playlistResp.Items {
-		// 		videoIDs = append(videoIDs, v2.ContentDetails.VideoId)
+		// 		videoIDs = append(videoIDs, v2)
 		// 	}
 		// }
 		videoIDs = append(videoIDs, v)
@@ -251,28 +241,31 @@ func (yt *ytAPI) fetchChannelDetails() (*youtube.ChannelListResponse, error) {
 	return call.Do()
 }
 
-func fetchMP3File(id string) (string, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://api.youtubemultidownloader.com/video?id=%s", id), nil)
+func fetchMP3File(id string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", fmt.Sprintf("http://www.youtubeinmp3.com/fetch/?format=JSON&video=https://www.youtube.com/watch?v=%s", id), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	req.Header.Add("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36")
-	req.Header.Add("referer", "https://youtubemultidownloader.com/index.html")
 
 	client := &http.Client{}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	ytdlResp := &YT1SResponse{}
+	ytdlResp := &YtInMp3Response{}
 
 	err = json.NewDecoder(resp.Body).Decode(ytdlResp)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return ytdlResp.Result.Num22, nil
+	dlResp, err := http.Get(ytdlResp.Link)
+	if err != nil {
+		return nil, err
+	}
+
+	return dlResp, nil
 }
